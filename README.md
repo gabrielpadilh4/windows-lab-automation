@@ -269,3 +269,7 @@ accounted for in `.ansible-lint`.
   10-hour delay so the key replicates before the gMSA is used.
 - For production WinRM, replace the self-signed cert with a trusted one and set
   `ansible_winrm_server_cert_validation: validate`.
+
+## License
+
+Released under the [MIT License](LICENSE).

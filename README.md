@@ -1,5 +1,9 @@
 # Ansible — Windows Server 2025 AD DS + AD CS + AD FS
 
+[![Ansible](https://img.shields.io/badge/Ansible-Supported-1A1918?logo=ansible)](https://docs.ansible.com/)
+[![OS](https://img.shields.io/badge/OS-Windows%20Server%202025-0078D6?logo=windows)](https://www.microsoft.com/windows-server)
+[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+
 Renames a fresh **Windows Server 2025** host to **DC1**, promotes it to the first
 domain controller of a **new AD forest**, installs **AD CS** as a **Standalone
 Root CA** with the **Web Enrollment** site (`/certsrv`) over HTTPS, then stands
@@ -7,6 +11,44 @@ up **AD FS** (Active Directory Federation Services) as the first node of a new
 federation farm.
 
 Connection: **WinRM over HTTPS** (pywinrm, NTLM).
+
+> [!WARNING]
+> **Lab environment — not production-hardened.** This build takes deliberate
+> shortcuts for convenience: a **Standalone Root CA co-located on the DC**,
+> **self-signed certificates** (WinRM and the lab Root CA), **AD FS on the DC**,
+> **example domain/credentials**, and `ansible_winrm_server_cert_validation:
+> ignore`. Secrets are kept in an **Ansible Vault** (not plaintext), but the
+> shipped example passwords are weak placeholders. Do not point this at anything
+> you care about — see [Notes](#notes) for the production caveats.
+
+## Architecture
+
+A single Windows Server 2025 host (`DC1`) stacks every role; the Linux control
+node drives it over WinRM/HTTPS. In production these roles would be split across
+dedicated servers (see [Notes](#notes)).
+
+```mermaid
+flowchart LR
+    CN["Control node (Linux)<br/>ansible-playbook"] -->|WinRM/HTTPS :5986<br/>NTLM| DC1
+
+    subgraph DC1["DC1 — Windows Server 2025 (corp.example.com)"]
+        ADDS["AD DS<br/>new forest · DNS"]
+        ADCS["AD CS<br/>Standalone Root CA"]
+        WEB["Web Enrollment<br/>/certsrv · HTTPS :443"]
+        ADFS["AD FS<br/>federation farm · :443"]
+        ADDS --> ADCS --> WEB
+        ADCS --> ADFS
+    end
+```
+
+## Topology
+
+| Hostname | IP | OS | Roles | Ports |
+| --- | --- | --- | --- | --- |
+| `DC1` (`dc01`) | `192.168.122.2` | Windows Server 2025 | AD DS, DNS, AD CS (Standalone Root CA), Web Enrollment, AD FS | 5986 (WinRM/HTTPS), 443 (AD FS + `/certsrv`), 53 (DNS), 389/636 (LDAP/LDAPS), 88 (Kerberos) |
+
+> Lab defaults. Change the address in `inventory/hosts.yml` and the names/domain
+> in `group_vars/windows_dc/ad.yml` (see [Configure](#configure)).
 
 ## Layout
 
@@ -84,7 +126,24 @@ This enables an HTTPS WinRM listener on port 5986.
    > All three must meet the Windows complexity policy (12+ chars, 3 of 4
    > character classes) or promotion/user creation will fail.
 
+   **Working with the vault** (after it's encrypted):
+
+   ```bash
+   ansible-vault view group_vars/windows_dc/vault.yml     # read without decrypting to disk
+   ansible-vault edit group_vars/windows_dc/vault.yml     # edit in place
+   ansible-vault rekey group_vars/windows_dc/vault.yml    # change the vault password
+   ```
+
 ## Run
+
+**Pre-flight checklist** — confirm each before the first run:
+
+- [ ] `pywinrm` and the Galaxy collections are installed on the control node.
+- [ ] The Windows host has a static IP and you ran `files/bootstrap-winrm.ps1` on it (HTTPS WinRM listener on 5986).
+- [ ] `inventory/hosts.yml` points `ansible_host` at that IP.
+- [ ] `group_vars/windows_dc/ad.yml` has your hostname, domain, NetBIOS, and CA name.
+- [ ] `vault.yml` is created, filled with complexity-compliant passwords, and encrypted; `.vault_pass` exists (mode `600`).
+- [ ] `ansible-playbook ping.yml` succeeds (WinRM auth works).
 
 ```bash
 ansible-playbook ping.yml      # verify WinRM auth

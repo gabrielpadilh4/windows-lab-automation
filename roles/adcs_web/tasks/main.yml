@@ -1,0 +1,72 @@
+---
+- name: Ensure AD CS Web Enrollment feature (ADCS-Web-Enrollment) is installed
+  ansible.windows.win_feature:
+    name: ADCS-Web-Enrollment
+    include_management_tools: true
+    state: present
+  register: adcs_web_feature
+
+- name: Reboot if the feature install requires it
+  ansible.windows.win_reboot:
+  when: adcs_web_feature.reboot_required
+
+# Issue a certificate for THIS host's FQDN (empty CN/SAN => host FQDN) so the
+# /certsrv site can be served over HTTPS. Reuses the ad_cert_request role, so
+# the AD FS cert (issued for the federation name) is left untouched.
+- name: Issue a host-FQDN web certificate for /certsrv over HTTPS
+  ansible.builtin.include_role:
+    name: ad_cert_request
+  vars:
+    cert_request_subject_cn: ""
+    cert_request_dns_sans: []
+
+- name: Configure Web Enrollment and bind /certsrv to HTTPS
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = 'Stop'
+      $Ansible.Changed = $false
+      Import-Module WebAdministration -ErrorAction Stop
+
+      $fqdn = [System.Net.Dns]::GetHostEntry($env:COMPUTERNAME).HostName
+
+      # 1) Configure the CertSrv web application if it is not already present.
+      $app = Get-WebApplication -Site 'Default Web Site' -Name 'CertSrv' -ErrorAction SilentlyContinue
+      if (-not $app) {
+        $res = Install-AdcsWebEnrollment -Force
+        # ErrorId 398 == role service already configured.
+        if ($res.ErrorId -and $res.ErrorId -ne 398) {
+          throw "Install-AdcsWebEnrollment failed: $($res.ErrorId) $($res.ErrorString)"
+        }
+        $Ansible.Changed = $true
+      }
+
+      # 2) Locate a server-auth cert (with private key) covering this FQDN.
+      $cert = Get-ChildItem Cert:\LocalMachine\My |
+        Where-Object {
+          $_.HasPrivateKey -and
+          (($_.DnsNameList.Unicode -contains $fqdn) -or ($_.Subject -eq "CN=$fqdn"))
+        } |
+        Sort-Object NotAfter -Descending | Select-Object -First 1
+      if (-not $cert) {
+        throw "No SSL certificate covering '$fqdn' found in LocalMachine\My"
+      }
+
+      # 3) Ensure a per-hostname (SNI) HTTPS binding on the Default Web Site.
+      #    SNI lets this share port 443 with AD FS, which uses a different host.
+      $bindInfo = "*:443:$fqdn"
+      $binding = Get-WebBinding -Name 'Default Web Site' -Protocol https -ErrorAction SilentlyContinue |
+        Where-Object { $_.bindingInformation -eq $bindInfo }
+      if (-not $binding) {
+        New-WebBinding -Name 'Default Web Site' -Protocol https -Port 443 -HostHeader $fqdn -SslFlags 1
+        $binding = Get-WebBinding -Name 'Default Web Site' -Protocol https |
+          Where-Object { $_.bindingInformation -eq $bindInfo }
+        $Ansible.Changed = $true
+      }
+
+      # 4) Attach the certificate to the SNI binding (IIS-native, handles http.sys).
+      $show = (& netsh http show sslcert hostnameport="$fqdn:443" 2>&1 | Out-String)
+      if ($show -notmatch [regex]::Escape($cert.Thumbprint)) {
+        $binding.AddSslCertificate($cert.Thumbprint, 'My')
+        $Ansible.Changed = $true
+      }
+  register: adcs_web

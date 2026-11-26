@@ -1,0 +1,12 @@
+---
+# Federation service name. Gets a DNS A record and MUST be covered by the SSL
+# cert in LocalMachine\My (the ad_cert_request role issues one for this name).
+adfs_service_name: "adfs.{{ ad_domain_dns_name }}"
+# Friendly name shown on the AD FS sign-in pages.
+adfs_display_name: "Federation Service"
+# Group Managed Service Account AD FS runs under. Created automatically by
+# Install-AdfsFarm when it does not exist (requires a KDS root key).
+adfs_gmsa_account: "{{ ad_domain_netbios_name }}\\adfsgmsa$"
+# Domain admin credential used to perform the farm installation.
+adfs_install_user: "{{ ad_domain_netbios_name }}\\Administrator"
+adfs_install_password: "{{ vault_admin_password }}"

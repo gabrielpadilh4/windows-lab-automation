@@ -2,6 +2,8 @@
 # ---------------------------------------------------------------------------
 # Active Directory Domain Services (new forest) settings.
 # ---------------------------------------------------------------------------
+# Computer name applied before promotion (a DC cannot be renamed afterwards).
+ad_hostname: DC1
 ad_domain_dns_name: corp.example.com
 ad_domain_netbios_name: CORP
 ad_forest_mode: WinThreshold      # 2016/2025 functional level
@@ -70,8 +72,21 @@ ad_users:
       - App-Users
 
 # ---------------------------------------------------------------------------
-# Certificate request (ad_cert_request role). Empty CN/SAN = use host FQDN.
+# Certificate request (ad_cert_request role). The web-server cert is issued for
+# the AD FS federation service name so AD FS can bind to it (see adfs below).
+# Leave CN/SAN empty to fall back to the host FQDN instead.
 # ---------------------------------------------------------------------------
-cert_request_subject_cn: ""
-cert_request_dns_sans: []
+cert_request_subject_cn: "{{ adfs_service_name }}"
+cert_request_dns_sans:
+  - "{{ adfs_service_name }}"
 cert_request_key_length: 2048
+
+# ---------------------------------------------------------------------------
+# Active Directory Federation Services (adfs role).
+# The federation service name gets a DNS A record (pointing at the DC) and must
+# be covered by the SSL cert issued above. AD FS runs under a gMSA that is
+# created automatically on first install (a KDS root key is provisioned first).
+# ---------------------------------------------------------------------------
+adfs_service_name: "adfs.{{ ad_domain_dns_name }}"
+adfs_display_name: "CORP Federation Service"
+adfs_gmsa_account: "{{ ad_domain_netbios_name }}\\adfsgmsa$"

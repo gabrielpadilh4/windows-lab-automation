@@ -88,8 +88,13 @@
           if (-not $reqId) { throw "No RequestId returned by submit: $submit" }
           # We are CA admin on this host: approve the pending request.
           & certutil.exe -resubmit $reqId | Out-Null
-          & certreq.exe -q -config $caConfig -retrieve $reqId $cer | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw "certreq -retrieve failed ($LASTEXITCODE)" }
+          # Issuing is not instantaneous; retrieve with a short retry loop.
+          for ($i = 0; $i -lt 10 -and -not $issued; $i++) {
+            & certreq.exe -q -config $caConfig -retrieve $reqId $cer 2>&1 | Out-Null
+            $issued = (Test-Path $cer) -and ((Get-Item $cer).Length -gt 0)
+            if (-not $issued) { Start-Sleep -Seconds 3 }
+          }
+          if (-not $issued) { throw "certreq -retrieve failed for RequestId $reqId" }
         }
 
         # Install the issued cert (binds to the pending private key).

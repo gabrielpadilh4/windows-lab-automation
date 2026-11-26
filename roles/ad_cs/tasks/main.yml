@@ -59,3 +59,20 @@
     name: CertSvc
     state: started
     start_mode: auto
+
+- name: Configure the Standalone CA to issue requests immediately (lab)
+  # A Standalone CA marks every request "pending" by default, which makes
+  # unattended enrolment racy. Setting RequestDisposition to Issue (1) lets the
+  # CA issue on submit, so the ad_cert_request role gets its cert back directly.
+  ansible.windows.win_powershell:
+    script: |
+      $Ansible.Changed = $false
+      $out = (& certutil.exe -getreg policy\RequestDisposition 2>&1 | Out-String)
+      if ($out -notmatch '\(0x1\)') {
+        & certutil.exe -setreg policy\RequestDisposition 1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+          throw "certutil -setreg RequestDisposition failed ($LASTEXITCODE)"
+        }
+        Restart-Service certsvc -Force
+        $Ansible.Changed = $true
+      }

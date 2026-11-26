@@ -1,4 +1,13 @@
 ---
+- name: Set the computer name before promotion
+  ansible.windows.win_hostname:
+    name: "{{ ad_hostname }}"
+  register: ad_rename
+
+- name: Reboot to apply the new computer name
+  ansible.windows.win_reboot:
+  when: ad_rename.reboot_required
+
 - name: Ensure AD-Domain-Services feature is installed
   ansible.windows.win_feature:
     name: AD-Domain-Services

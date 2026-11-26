@@ -1,0 +1,97 @@
+---
+- name: Ensure AD FS feature (ADFS-Federation) is installed
+  ansible.windows.win_feature:
+    name: ADFS-Federation
+    include_management_tools: true
+    state: present
+  register: adfs_feature
+
+- name: Reboot if the feature install requires it
+  ansible.windows.win_reboot:
+  when: adfs_feature.reboot_required
+
+- name: Determine the host's primary IPv4 address
+  ansible.windows.win_powershell:
+    script: |
+      $Ansible.Changed = $false
+      (Get-NetIPAddress -AddressFamily IPv4 |
+        Where-Object { $_.IPAddress -ne '127.0.0.1' -and $_.IPAddress -notlike '169.254.*' } |
+        Select-Object -First 1).IPAddress
+  register: adfs_ip
+  changed_when: false
+
+- name: Ensure a DNS A record for the federation service name
+  ansible.windows.win_dns_record:
+    name: "{{ adfs_service_name.split('.')[0] }}"
+    zone: "{{ ad_domain_dns_name }}"
+    type: A
+    value: "{{ adfs_ip.output[0] }}"
+    state: present
+
+- name: Ensure a KDS root key exists (required for the AD FS gMSA)
+  microsoft.ad.kds_root_key:
+    # Effective immediately — safe on a single-DC lab (no replication to wait for).
+    effective_time_hours: 0
+    match_by: any
+    state: present
+
+- name: Configure the first AD FS farm node
+  ansible.windows.win_powershell:
+    parameters:
+      ServiceName: "{{ adfs_service_name }}"
+      DisplayName: "{{ adfs_display_name }}"
+      GmsaAccount: "{{ adfs_gmsa_account }}"
+      AdminUser: "{{ adfs_install_user }}"
+      AdminPassword: "{{ adfs_install_password }}"
+    script: |
+      [CmdletBinding()]
+      param (
+        [string]$ServiceName,
+        [string]$DisplayName,
+        [string]$GmsaAccount,
+        [string]$AdminUser,
+        [string]$AdminPassword
+      )
+      $ErrorActionPreference = 'Stop'
+      $Ansible.Changed = $false
+
+      Import-Module ADFS -ErrorAction Stop
+
+      # Idempotency: Get-AdfsProperties only succeeds once the farm is configured.
+      try { Get-AdfsProperties -ErrorAction Stop | Out-Null; return } catch { }
+
+      # The SSL cert must exist and cover the federation service name.
+      $cert = Get-ChildItem Cert:\LocalMachine\My |
+        Where-Object {
+          $_.HasPrivateKey -and
+          (($_.DnsNameList.Unicode -contains $ServiceName) -or ($_.Subject -eq "CN=$ServiceName"))
+        } |
+        Sort-Object NotAfter -Descending | Select-Object -First 1
+      if (-not $cert) {
+        throw "No SSL certificate covering '$ServiceName' found in LocalMachine\My. Run the ad_cert_request role first."
+      }
+
+      $cred = [System.Management.Automation.PSCredential]::new(
+        $AdminUser,
+        (ConvertTo-SecureString $AdminPassword -AsPlainText -Force))
+
+      $result = Install-AdfsFarm `
+        -FederationServiceName $ServiceName `
+        -FederationServiceDisplayName $DisplayName `
+        -CertificateThumbprint $cert.Thumbprint `
+        -GroupServiceAccountIdentifier $GmsaAccount `
+        -Credential $cred `
+        -OverwriteConfiguration `
+        -Confirm:$false
+
+      if ($result.Status -ne 'Success') {
+        throw "Install-AdfsFarm failed: $($result.Status) - $($result.Message)"
+      }
+      $Ansible.Changed = $true
+  register: adfs_farm
+
+- name: Ensure the AD FS service is running
+  ansible.windows.win_service:
+    name: adfssrv
+    state: started
+    start_mode: auto

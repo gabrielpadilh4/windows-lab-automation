@@ -55,6 +55,28 @@
       ansible.builtin.debug:
         var: ca_info.output[0]
 
+    # --- AD FS -------------------------------------------------------------
+    - name: Query the Federation Service
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          $svc = Get-Service adfssrv -ErrorAction SilentlyContinue
+          $name = $null
+          try {
+            Import-Module ADFS -ErrorAction Stop
+            $name = (Get-AdfsProperties).HostName
+          } catch { }
+          [ordered]@{
+            AdfsSvcState      = "$($svc.Status)"
+            FederationService = $name
+          }
+      register: adfs_info
+      changed_when: false
+
+    - name: Report AD FS status
+      ansible.builtin.debug:
+        var: adfs_info.output[0]
+
     # --- Directory content -------------------------------------------------
     - name: List created users under the Corp OU
       microsoft.ad.object_info:
@@ -82,8 +104,11 @@
 
     - name: Report web-server certificates (non-CA, with private key)
       ansible.builtin.debug:
+        # is_ca is only present when a basic-constraints extension exists (CA
+        # certs carry it); leaf certs omit it, so reject any cert that defines
+        # is_ca to drop the Root CA cert and keep the issued web cert.
         msg: >-
           {{ certs.certificates
              | selectattr('has_private_key', 'equalto', true)
-             | rejectattr('is_ca', 'equalto', true)
+             | rejectattr('is_ca', 'defined')
              | map(attribute='subject') | list }}

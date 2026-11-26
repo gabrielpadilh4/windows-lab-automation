@@ -1,0 +1,42 @@
+---
+- name: Create organizational units
+  microsoft.ad.ou:
+    name: "{{ item.name }}"
+    path: "{{ item.path | default(ad_base_dn) }}"
+    description: "{{ item.description | default(omit) }}"
+    protect_from_deletion: "{{ item.protect_from_deletion | default(true) }}"
+    state: present
+  loop: "{{ ad_ous }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Create groups
+  microsoft.ad.group:
+    name: "{{ item.name }}"
+    scope: "{{ item.scope | default('global') }}"
+    category: "{{ item.category | default('security') }}"
+    path: "{{ item.path | default(ad_base_dn) }}"
+    description: "{{ item.description | default(omit) }}"
+    state: present
+  loop: "{{ ad_groups }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Create users
+  microsoft.ad.user:
+    name: "{{ item.name }}"
+    firstname: "{{ item.firstname | default(omit) }}"
+    surname: "{{ item.surname | default(omit) }}"
+    display_name: "{{ item.display_name | default(omit) }}"
+    upn: "{{ item.upn | default(item.name ~ '@' ~ ad_domain_dns_name) }}"
+    password: "{{ item.password }}"
+    path: "{{ item.path | default(ad_base_dn) }}"
+    enabled: "{{ item.enabled | default(true) }}"
+    password_never_expires: "{{ item.password_never_expires | default(false) }}"
+    groups:
+      add: "{{ item.groups | default([]) }}"
+    state: present
+  loop: "{{ ad_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true

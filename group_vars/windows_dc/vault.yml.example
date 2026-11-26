@@ -1,0 +1,14 @@
+---
+# ---------------------------------------------------------------------------
+# SECRETS — copy to vault.yml and encrypt it:
+#   cp group_vars/windows_dc/vault.yml.example group_vars/windows_dc/vault.yml
+#   # edit the real passwords, then:
+#   ansible-vault encrypt group_vars/windows_dc/vault.yml
+#
+# Passwords must meet the Windows complexity policy (12+ chars, 3 of 4
+# character classes). The promotion will fail with a weak password.
+# ---------------------------------------------------------------------------
+vault_admin_password: "ChangeMe-Admin-123!"
+vault_safe_mode_password: "ChangeMe-DSRM-123!"
+# Initial password set on AD users created by the ad_content role.
+vault_user_default_password: "ChangeMe-User-123!"

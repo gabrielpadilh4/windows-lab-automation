@@ -1,0 +1,6 @@
+---
+ad_domain_dns_name: corp.example.com
+ad_domain_netbios_name: CORP
+ad_forest_mode: WinThreshold
+ad_domain_mode: WinThreshold
+ad_safe_mode_password: ""

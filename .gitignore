@@ -1,0 +1,10 @@
+# Secrets — never commit
+.vault_pass
+group_vars/windows_dc/vault.yml
+
+# Installed collections
+collections/
+
+# Ansible noise
+*.retry
+*.log

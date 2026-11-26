@@ -1,0 +1,7 @@
+---
+adcs_ca_type: StandaloneRootCA
+adcs_ca_common_name: "Standalone Root CA"
+adcs_key_length: 4096
+adcs_hash_algorithm: SHA256
+adcs_validity_period: Years
+adcs_validity_period_units: 10

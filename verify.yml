@@ -1,0 +1,89 @@
+---
+# Post-build health check. Read-only — makes no changes.
+#   ansible-playbook verify.yml
+- name: Verify AD DS, AD CS, content, and issued certificate
+  hosts: windows_dc
+  gather_facts: false
+
+  tasks:
+    # --- AD DS -------------------------------------------------------------
+    - name: Collect domain controller facts
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          $dc = Get-ADDomainController -Server localhost
+          $domain = Get-ADDomain
+          [ordered]@{
+            Forest         = $domain.Forest
+            Domain         = $domain.DNSRoot
+            NetBIOS        = $domain.NetBIOSName
+            DomainMode     = "$($domain.DomainMode)"
+            DCName         = $dc.HostName
+            IsGlobalCatalog = $dc.IsGlobalCatalog
+          }
+      register: dc_info
+      changed_when: false
+
+    - name: Report AD DS status
+      ansible.builtin.debug:
+        var: dc_info.output[0]
+
+    - name: Assert key AD services are running
+      ansible.windows.win_service_info:
+        name: "{{ item }}"
+      loop: [NTDS, ADWS, DNS, Netlogon]
+      register: ad_services
+      failed_when: >-
+        ad_services.services | length == 0 or
+        (ad_services.services[0].state != 'started')
+
+    # --- AD CS -------------------------------------------------------------
+    - name: Query the Certification Authority
+      ansible.windows.win_powershell:
+        script: |
+          $Ansible.Changed = $false
+          $svc = Get-Service CertSvc -ErrorAction SilentlyContinue
+          $name = (& certutil.exe 2>$null | Select-String -Pattern 'Name:' | Select-Object -First 1).ToString().Trim()
+          [ordered]@{
+            CertSvcState = "$($svc.Status)"
+            CAInfo       = $name
+          }
+      register: ca_info
+      changed_when: false
+
+    - name: Report AD CS status
+      ansible.builtin.debug:
+        var: ca_info.output[0]
+
+    # --- Directory content -------------------------------------------------
+    - name: List created users under the Corp OU
+      microsoft.ad.object_info:
+        filter: "objectClass -eq 'user' -and objectClass -ne 'computer'"
+        search_base: "OU=Users,OU=Corp,{{ ad_base_dn }}"
+        properties:
+          - sAMAccountName
+          - displayName
+      register: corp_users
+      failed_when: false
+
+    - name: Report created users
+      ansible.builtin.debug:
+        msg: >-
+          {{ corp_users.objects
+             | default([])
+             | map(attribute='sAMAccountName') | list }}
+
+    # --- Issued certificate ------------------------------------------------
+    - name: Check for an installed web-server certificate
+      ansible.windows.win_certificate_info:
+        store_name: My
+        store_location: LocalMachine
+      register: certs
+
+    - name: Report web-server certificates (non-CA, with private key)
+      ansible.builtin.debug:
+        msg: >-
+          {{ certs.certificates
+             | selectattr('has_private_key', 'equalto', true)
+             | rejectattr('is_ca', 'equalto', true)
+             | map(attribute='subject') | list }}

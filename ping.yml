@@ -1,0 +1,9 @@
+---
+# Quick connectivity/auth check before running site.yml:
+#   ansible-playbook ping.yml
+- name: Verify WinRM connectivity
+  hosts: windows_dc
+  gather_facts: false
+  tasks:
+    - name: Ping Windows host over WinRM
+      ansible.windows.win_ping:

@@ -1,0 +1,118 @@
+---
+- name: Determine the host FQDN
+  ansible.windows.win_powershell:
+    script: |
+      $Ansible.Changed = $false
+      [System.Net.Dns]::GetHostEntry($env:COMPUTERNAME).HostName
+  register: host_fqdn
+  changed_when: false
+
+- name: Resolve effective subject CN and SANs
+  ansible.builtin.set_fact:
+    _cert_cn: "{{ cert_request_subject_cn | default('', true) or host_fqdn.output[0] }}"
+    _cert_sans: "{{ cert_request_dns_sans if (cert_request_dns_sans | length > 0) else [host_fqdn.output[0]] }}"
+
+- name: Request and install a web-server certificate from the Standalone Root CA
+  ansible.windows.win_powershell:
+    parameters:
+      SubjectCN: "{{ _cert_cn }}"
+      DnsSans: "{{ _cert_sans }}"
+      KeyLength: "{{ cert_request_key_length }}"
+      CaCommonName: "{{ cert_request_ca_common_name }}"
+    script: |
+      [CmdletBinding()]
+      param (
+        [string]$SubjectCN,
+        [string[]]$DnsSans,
+        [int]$KeyLength,
+        [string]$CaCommonName
+      )
+      $ErrorActionPreference = 'Stop'
+      $Ansible.Changed = $false
+
+      # Idempotency: skip if a matching cert with a private key already exists.
+      $existing = Get-ChildItem Cert:\LocalMachine\My |
+        Where-Object { $_.Subject -eq "CN=$SubjectCN" -and $_.HasPrivateKey }
+      if ($existing) { return }
+
+      $fqdn = [System.Net.Dns]::GetHostEntry($env:COMPUTERNAME).HostName
+      $caConfig = "$fqdn\$CaCommonName"
+
+      $work = Join-Path $env:TEMP ("certreq_" + [guid]::NewGuid().ToString())
+      New-Item -ItemType Directory -Path $work | Out-Null
+      try {
+        $inf = Join-Path $work 'request.inf'
+        $req = Join-Path $work 'request.req'
+        $cer = Join-Path $work 'cert.cer'
+
+        # Build the INF as a line array (indentation-safe, no here-string).
+        $lines = @(
+          '[Version]'
+          'Signature="$Windows NT$"'
+          ''
+          '[NewRequest]'
+          "Subject = `"CN=$SubjectCN`""
+          'KeySpec = 1'
+          "KeyLength = $KeyLength"
+          'Exportable = TRUE'
+          'MachineKeySet = TRUE'
+          'SMIME = FALSE'
+          'PrivateKeyArchive = FALSE'
+          'UserProtected = FALSE'
+          'UseExistingKeySet = FALSE'
+          'ProviderName = "Microsoft RSA SChannel Cryptographic Provider"'
+          'ProviderType = 12'
+          'RequestType = PKCS10'
+          'KeyUsage = 0xa0'
+          'HashAlgorithm = SHA256'
+          ''
+          '[EnhancedKeyUsageExtension]'
+          'OID=1.3.6.1.5.5.7.3.1'
+          ''
+          '[Extensions]'
+          '2.5.29.17 = "{text}"'
+        )
+        $lines += ($DnsSans | ForEach-Object { "_continue_ = `"dns=$_&`"" })
+        Set-Content -Path $inf -Value $lines -Encoding ASCII
+
+        & certreq.exe -q -new $inf $req | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "certreq -new failed ($LASTEXITCODE)" }
+
+        # Submit. A Standalone CA pends the request and returns a RequestId.
+        $submit = (& certreq.exe -q -config $caConfig -submit $req $cer 2>&1 | Out-String)
+        $reqId = $null
+        if ($submit -match 'RequestId:\s*"?(\d+)"?') { $reqId = $Matches[1] }
+
+        $issued = (Test-Path $cer) -and ((Get-Item $cer).Length -gt 0)
+        if (-not $issued) {
+          if (-not $reqId) { throw "No RequestId returned by submit: $submit" }
+          # We are CA admin on this host: approve the pending request.
+          & certutil.exe -resubmit $reqId | Out-Null
+          & certreq.exe -q -config $caConfig -retrieve $reqId $cer | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "certreq -retrieve failed ($LASTEXITCODE)" }
+        }
+
+        # Install the issued cert (binds to the pending private key).
+        & certreq.exe -q -accept $cer | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "certreq -accept failed ($LASTEXITCODE)" }
+
+        $Ansible.Changed = $true
+      }
+      finally {
+        Remove-Item -Path $work -Recurse -Force -ErrorAction SilentlyContinue
+      }
+  register: cert_request
+
+- name: Confirm the certificate is present in the machine store
+  ansible.windows.win_certificate_info:
+    store_name: My
+    store_location: LocalMachine
+  register: machine_certs
+
+- name: Show the issued certificate subject/thumbprint
+  ansible.builtin.debug:
+    msg: >-
+      {{ machine_certs.certificates
+         | selectattr('subject', 'defined')
+         | selectattr('subject', 'search', 'CN=' ~ _cert_cn)
+         | map(attribute='thumbprint') | list }}

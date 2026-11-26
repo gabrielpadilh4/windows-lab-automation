@@ -1,0 +1,17 @@
+---
+# ---------------------------------------------------------------------------
+# WinRM connection settings for the Windows Server 2025 host.
+# ---------------------------------------------------------------------------
+ansible_connection: winrm
+ansible_port: 5986
+ansible_winrm_scheme: https
+ansible_winrm_transport: ntlm
+# Fresh servers use a self-signed WinRM cert; ignore validation in a lab.
+# For production, provision a trusted cert and set this to "validate".
+ansible_winrm_server_cert_validation: ignore
+
+# Local administrator credentials used BEFORE the box is promoted to a DC.
+# After promotion, the forest admin is <netbios>\Administrator with this
+# same password (set below in ad.yml), so these keep working.
+ansible_user: Administrator
+ansible_password: "{{ vault_admin_password }}"

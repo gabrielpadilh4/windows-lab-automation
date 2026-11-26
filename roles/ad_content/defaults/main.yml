@@ -1,0 +1,8 @@
+---
+# Base DN derived from the DNS domain (corp.example.com -> DC=corp,DC=example,DC=com)
+ad_base_dn: "DC={{ ad_domain_dns_name.split('.') | join(',DC=') }}"
+
+# Data-driven inventory of what to create. Override in group_vars/windows_dc/ad.yml.
+ad_ous: []
+ad_groups: []
+ad_users: []

@@ -1,0 +1,20 @@
+---
+profile: production
+
+exclude_paths:
+  - collections/
+  - .cache/
+  - .vault_pass
+
+# Vault files should not be parsed as plain YAML.
+kinds:
+  - vault: "**/vault.yml"
+
+# win_powershell/certreq scripts are embedded; command-instead-of-* and
+# no-changed-when don't apply the same way to Windows shell-outs.
+warn_list:
+  - command-instead-of-shell
+  - experimental
+
+skip_list:
+  - var-naming[no-role-prefix]   # shared AD vars are intentionally cross-role

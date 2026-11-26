@@ -1,0 +1,61 @@
+---
+- name: Ensure AD-Certificate feature (Certification Authority) is installed
+  ansible.windows.win_feature:
+    name: ADCS-Cert-Authority
+    include_management_tools: true
+    state: present
+  register: adcs_feature
+
+- name: Reboot if the feature install requires it
+  ansible.windows.win_reboot:
+  when: adcs_feature.reboot_required
+
+- name: Check whether a Certification Authority is already configured
+  ansible.windows.win_powershell:
+    script: |
+      $Ansible.Changed = $false
+      $cfg = 'HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration'
+      [bool]((Test-Path $cfg) -and (Get-ChildItem $cfg -ErrorAction SilentlyContinue))
+  register: adcs_configured
+  changed_when: false
+
+- name: Configure the Standalone Root Certification Authority
+  ansible.windows.win_powershell:
+    parameters:
+      CaType: "{{ adcs_ca_type }}"
+      CaCommonName: "{{ adcs_ca_common_name }}"
+      KeyLength: "{{ adcs_key_length }}"
+      HashAlgorithm: "{{ adcs_hash_algorithm }}"
+      ValidityPeriod: "{{ adcs_validity_period }}"
+      ValidityPeriodUnits: "{{ adcs_validity_period_units }}"
+    script: |
+      [CmdletBinding()]
+      param (
+        [string]$CaType,
+        [string]$CaCommonName,
+        [int]$KeyLength,
+        [string]$HashAlgorithm,
+        [string]$ValidityPeriod,
+        [int]$ValidityPeriodUnits
+      )
+      $result = Install-AdcsCertificationAuthority `
+        -CAType $CaType `
+        -CACommonName $CaCommonName `
+        -KeyLength $KeyLength `
+        -HashAlgorithmName $HashAlgorithm `
+        -ValidityPeriod $ValidityPeriod `
+        -ValidityPeriodUnits $ValidityPeriodUnits `
+        -CryptoProviderName "RSA#Microsoft Software Key Storage Provider" `
+        -Force
+      # ErrorId 398 == CA role service is already installed/configured.
+      if ($result.ErrorId -and $result.ErrorId -ne 398) {
+        throw "Install-AdcsCertificationAuthority failed: $($result.ErrorId) $($result.ErrorString)"
+      }
+      $Ansible.Changed = $true
+  when: not (adcs_configured.output[0] | bool)
+
+- name: Ensure the CertSvc service is running
+  ansible.windows.win_service:
+    name: CertSvc
+    state: started
+    start_mode: auto

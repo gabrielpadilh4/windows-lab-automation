@@ -1,0 +1,14 @@
+---
+- name: Configure Windows Server 2025 as AD DS domain controller + AD CS Root CA
+  hosts: windows_dc
+  gather_facts: true
+
+  roles:
+    - role: ad_ds
+      tags: [ad_ds, domain]
+    - role: ad_cs
+      tags: [ad_cs, pki]
+    - role: ad_content
+      tags: [ad_content, content]
+    - role: ad_cert_request
+      tags: [ad_cert_request, cert]

@@ -1,0 +1,77 @@
+---
+# ---------------------------------------------------------------------------
+# Active Directory Domain Services (new forest) settings.
+# ---------------------------------------------------------------------------
+ad_domain_dns_name: corp.example.com
+ad_domain_netbios_name: CORP
+ad_forest_mode: WinThreshold      # 2016/2025 functional level
+ad_domain_mode: WinThreshold
+# Directory Services Restore Mode (DSRM) password.
+ad_safe_mode_password: "{{ vault_safe_mode_password }}"
+
+# ---------------------------------------------------------------------------
+# Active Directory Certificate Services (Standalone Root CA) settings.
+# ---------------------------------------------------------------------------
+adcs_ca_type: StandaloneRootCA
+adcs_ca_common_name: "CORP Standalone Root CA"
+adcs_key_length: 4096
+adcs_hash_algorithm: SHA256
+adcs_validity_period: Years
+adcs_validity_period_units: 10
+
+# ---------------------------------------------------------------------------
+# AD content: OUs, groups, users (data-driven, created by the ad_content role).
+# Base DN is auto-derived from ad_domain_dns_name.
+# ---------------------------------------------------------------------------
+ad_base_dn: "DC={{ ad_domain_dns_name.split('.') | join(',DC=') }}"
+
+ad_ous:
+  - name: Corp
+    description: "Top-level OU for company objects"
+  - name: Users
+    path: "OU=Corp,{{ ad_base_dn }}"
+    description: "Managed user accounts"
+  - name: Groups
+    path: "OU=Corp,{{ ad_base_dn }}"
+    description: "Security groups"
+  - name: Servers
+    path: "OU=Corp,{{ ad_base_dn }}"
+    description: "Member servers"
+
+ad_groups:
+  - name: App-Admins
+    path: "OU=Groups,OU=Corp,{{ ad_base_dn }}"
+    scope: global
+    category: security
+    description: "Application administrators"
+  - name: App-Users
+    path: "OU=Groups,OU=Corp,{{ ad_base_dn }}"
+    scope: global
+    category: security
+    description: "Application users"
+
+ad_users:
+  - name: jane.doe
+    firstname: Jane
+    surname: Doe
+    display_name: "Jane Doe"
+    password: "{{ vault_user_default_password }}"
+    path: "OU=Users,OU=Corp,{{ ad_base_dn }}"
+    groups:
+      - App-Users
+  - name: alan.smith
+    firstname: Alan
+    surname: Smith
+    display_name: "Alan Smith"
+    password: "{{ vault_user_default_password }}"
+    path: "OU=Users,OU=Corp,{{ ad_base_dn }}"
+    groups:
+      - App-Admins
+      - App-Users
+
+# ---------------------------------------------------------------------------
+# Certificate request (ad_cert_request role). Empty CN/SAN = use host FQDN.
+# ---------------------------------------------------------------------------
+cert_request_subject_cn: ""
+cert_request_dns_sans: []
+cert_request_key_length: 2048

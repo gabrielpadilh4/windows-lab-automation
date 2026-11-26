@@ -1,0 +1,10 @@
+---
+# Subject common name for the requested web-server certificate.
+# Defaults to this host's FQDN (computed on the target in tasks/main.yml).
+cert_request_subject_cn: ""
+# DNS Subject Alternative Names to include.
+cert_request_dns_sans: []
+# Key length for the request.
+cert_request_key_length: 2048
+# The Standalone Root CA's common name (must match the installed CA).
+cert_request_ca_common_name: "{{ adcs_ca_common_name }}"
